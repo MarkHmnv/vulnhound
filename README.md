@@ -13,13 +13,20 @@ system it cannot check as clean.
 
 ## Install
 
-Requires a recent stable Rust toolchain (edition 2024).
+From [COPR](https://copr.fedorainfracloud.org/coprs/markhmnv/vulnhound/):
+
+```sh
+sudo dnf copr enable markhmnv/vulnhound
+sudo dnf install vulnhound
+```
+
+Updates then come with `dnf upgrade`. Or build from source with a recent stable Rust toolchain:
 
 ```sh
 cargo install --path .
 ```
 
-No root needed, only network access.
+Scanning needs no root, only network access.
 
 ## Usage
 
@@ -126,6 +133,8 @@ src/
   report/            terminal summary, Markdown report, progress display
   rpmver.rs          rpm version comparison
   system.rs          commands, files, HTTP, cache
+vulnhound.spec       RPM spec
+.copr/Makefile       builds the SRPM for COPR, with vendored crates
 ```
 
 To add a distribution, implement `Backend` in a new module under `src/distro/` and register it in
