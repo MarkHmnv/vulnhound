@@ -45,6 +45,60 @@ pub(crate) fn upstream_without_findings<'a>(report: &'a Report, shown: &[&Findin
         .collect()
 }
 
+/// Words that differ between backends.
+pub(crate) struct Terms {
+    /// What is installed: "package" or "program".
+    pub item: &'static str,
+    /// What items are checked against.
+    pub data: String,
+    /// Items that cannot be checked, in a short phrase.
+    pub uncovered: &'static str,
+    /// Why those cannot be checked.
+    pub coverage_intro: &'static str,
+    pub updates_heading: &'static str,
+    pub updates_intro: &'static str,
+    pub updates_label: &'static str,
+    /// Summary line for `third_party`, after the count.
+    pub updates_summary: (&'static str, &'static str),
+}
+
+pub(crate) fn terms(report: &Report) -> Terms {
+    if report.backend == "windows" {
+        Terms {
+            item: "program",
+            data: "MSRC and NVD vulnerability data".into(),
+            uncovered: "not checked",
+            coverage_intro: "have no known NVD product, so they were not checked",
+            updates_heading: "Program updates",
+            updates_intro: "Programs without known CVEs that winget can update.",
+            updates_label: "Updates:",
+            updates_summary: ("program update", "available in winget"),
+        }
+    } else {
+        Terms {
+            item: "package",
+            data: format!("{} vulnerability data", report.backend),
+            uncovered: "third-party",
+            coverage_intro: "come from outside the distro",
+            updates_heading: "Third-party packages",
+            updates_intro: "No vulnerability data exists for packages from outside the distro, so only their update \
+                            status is checked.",
+            updates_label: "Third-party:",
+            updates_summary: ("third-party package", "need attention"),
+        }
+    }
+}
+
+/// Where an update comes from, after "**Update:** `<build>`".
+pub(crate) fn update_place(channel: &str) -> String {
+    match channel {
+        "testing" => "in testing repository only".into(),
+        "stable" => "in stable".into(),
+        "vendor" => "from the vendor, no winget package".into(),
+        other => format!("in {other}"),
+    }
+}
+
 pub(crate) fn plural(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
@@ -175,6 +229,7 @@ pub(crate) mod fixtures {
                 },
             ],
             warnings: vec!["Bodhi is down".into()],
+            notes: Vec::new(),
         }
     }
 }

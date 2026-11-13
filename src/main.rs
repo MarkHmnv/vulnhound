@@ -15,6 +15,9 @@ use vulnhound::system::LiveSystem;
 ///
 /// Prints a summary and writes the full report as Markdown.
 ///
+/// On Windows, set NVD_API_KEY (free from NVD) to look up programs ten times faster and to also
+/// check programs that are not in vulnhound's built-in table.
+///
 /// Exit status: 0 nothing found, 1 vulnerable packages found, 2 error.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about)]
@@ -54,6 +57,7 @@ fn main() -> ExitCode {
     let opts = ScanOptions {
         upstream: !cli.no_upstream,
         kernel_cves: !cli.no_kernel_cves,
+        nvd_api_key: std::env::var("NVD_API_KEY").ok().filter(|k| !k.trim().is_empty()),
     };
 
     let scanned = vulnhound::scan(&sys, &opts, progress);

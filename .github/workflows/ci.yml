@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo test
+      - run: cargo clippy --all-targets -- -D warnings
+
+  # Real scans: the live test runs the binary on the machine and checks summary and report.
+  # The reports are attached to each run.
+  fedora-scan:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      # Fedora's own Rust, as COPR builds with it.
+      - run: dnf -y install cargo rust gcc git-core
+      - uses: actions/checkout@v4
+      - run: cargo test --release -- --ignored live_scan --nocapture
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fedora-report
+          path: target/tmp/live-report.md
+
+  # Windows Server with Chrome, Firefox, 7-Zip, Git, Python, Node, ...
+  windows-scan:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --release -- --ignored live_scan --nocapture
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-report
+          path: |
+            target/tmp/live-report.md
+            target/release/vulnhound.exe

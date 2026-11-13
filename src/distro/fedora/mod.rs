@@ -6,7 +6,7 @@ pub mod bugzilla;
 pub mod changelog;
 pub mod rpmdb;
 
-use crate::distro::{Backend, ScanOptions};
+use crate::distro::{Backend, ScanOptions, Steps, or_warn};
 use crate::model::{
     Confidence, Coverage, Finding, Report, Severity, ThirdPartyPackage, ThirdPartyStatus, Update, UpstreamRelease,
     Vulnerability,
@@ -84,10 +84,7 @@ impl Backend for Fedora {
 
     fn scan(&self, sys: &dyn System, opts: &ScanOptions, progress: &dyn Progress) -> Result<Report> {
         let mut warnings = Vec::new();
-        let mut steps = Steps {
-            progress,
-            warnings: &mut warnings,
-        };
+        let mut steps = Steps::new(progress, &mut warnings);
 
         progress.start("Reading installed packages", None);
         let installed = rpmdb::query_installed(sys).inspect_err(|e| progress.warn(&e.to_string()))?;
@@ -206,31 +203,8 @@ impl Backend for Fedora {
             third_party,
             upstream,
             warnings,
+            notes: Vec::new(),
         })
-    }
-}
-
-struct Steps<'a> {
-    progress: &'a dyn Progress,
-    warnings: &'a mut Vec<String>,
-}
-
-impl Steps<'_> {
-    /// The step ends with a warning if it added one to the report, else with `describe`.
-    fn run<T>(
-        &mut self,
-        name: &str,
-        work: impl FnOnce(&mut Vec<String>) -> T,
-        describe: impl FnOnce(&T) -> String,
-    ) -> T {
-        self.progress.start(name, None);
-        let before = self.warnings.len();
-        let out = work(self.warnings);
-        match self.warnings.get(before) {
-            Some(w) => self.progress.warn(w),
-            None => self.progress.finish(&describe(&out)),
-        }
-        out
     }
 }
 
@@ -274,14 +248,6 @@ impl Fedora {
             })
             .ok()
     }
-}
-
-/// One unreachable data source must not stop the scan.
-fn or_warn<T: Default>(result: Result<T>, warnings: &mut Vec<String>, what: &str) -> T {
-    result.unwrap_or_else(|e| {
-        warnings.push(format!("{what}: {e:#}"));
-        T::default()
-    })
 }
 
 fn flaws(
@@ -1256,6 +1222,7 @@ code\t0\t1.146.0\t1.el8\tx86_64\tcode-1.146.0-1.el8.src.rpm\tcode\n";
         let opts = ScanOptions {
             upstream: false,
             kernel_cves: false,
+            nvd_api_key: None,
         };
         let r = fedora().scan(&sys, &opts, &Silent).unwrap();
         assert!(r.upstream.is_empty());

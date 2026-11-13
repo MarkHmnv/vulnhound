@@ -1,6 +1,9 @@
 //! Full report as Markdown.
 
-use super::{fix_commands, plural, severity_counts, split_findings, third_party_commands, upstream_without_findings};
+use super::{
+    fix_commands, plural, severity_counts, split_findings, terms, third_party_commands, update_place,
+    upstream_without_findings,
+};
 use crate::model::{Confidence, Finding, Report, ThirdPartyStatus};
 use std::fmt::Write;
 
@@ -33,7 +36,7 @@ pub fn render(report: &Report, generated: &str) -> String {
     }
 
     if !affected.is_empty() {
-        let _ = writeln!(out, "## Vulnerable packages\n");
+        let _ = writeln!(out, "## Vulnerable {}s\n", terms(report).item);
         for f in &affected {
             write_finding(&mut out, report, f);
         }
@@ -51,14 +54,18 @@ pub fn render(report: &Report, generated: &str) -> String {
 
 fn write_summary(out: &mut String, report: &Report, affected: &[&Finding], likely: &[&Finding]) {
     let c = &report.coverage;
+    let t = terms(report);
     let _ = writeln!(out, "## Summary\n");
     let _ = writeln!(
         out,
-        "- {} of {} packages checked against {} vulnerability data.",
-        c.covered_packages, c.installed_packages, report.backend
+        "- {} of {} {}s checked against {}.",
+        c.covered_packages, c.installed_packages, t.item, t.data
     );
+    for n in &report.notes {
+        let _ = writeln!(out, "- {}", esc(n));
+    }
     if affected.is_empty() {
-        let _ = writeln!(out, "- No known vulnerabilities in the checked packages.");
+        let _ = writeln!(out, "- No known vulnerabilities in the checked {}s.", t.item);
     } else {
         let counts: Vec<String> = severity_counts(affected)
             .into_iter()
@@ -67,7 +74,7 @@ fn write_summary(out: &mut String, report: &Report, affected: &[&Finding], likel
         let _ = writeln!(
             out,
             "- **{} vulnerable**: {}.",
-            plural(affected.len(), "package"),
+            plural(affected.len(), t.item),
             counts.join(", ")
         );
     }
@@ -96,8 +103,9 @@ fn write_summary(out: &mut String, report: &Report, affected: &[&Finding], likel
     if !report.third_party.is_empty() {
         let _ = writeln!(
             out,
-            "- {} need attention.",
-            plural(report.third_party.len(), "third-party package")
+            "- {} {}.",
+            plural(report.third_party.len(), t.updates_summary.0),
+            t.updates_summary.1
         );
     }
     out.push('\n');
@@ -159,13 +167,11 @@ fn write_third_party(out: &mut String, report: &Report) {
     if report.third_party.is_empty() {
         return;
     }
-    let _ = writeln!(out, "## Third-party packages\n");
-    let _ = writeln!(
-        out,
-        "No vulnerability data exists for packages from outside the distro, so only their update \
-         status is checked.\n"
-    );
-    let _ = writeln!(out, "| Package | Vendor | Installed | Status |\n|---|---|---|---|");
+    let t = terms(report);
+    let _ = writeln!(out, "## {}\n", t.updates_heading);
+    let _ = writeln!(out, "{}\n", t.updates_intro);
+    let item = if t.item == "program" { "Program" } else { "Package" };
+    let _ = writeln!(out, "| {item} | Vendor | Installed | Status |\n|---|---|---|---|");
     for t in &report.third_party {
         let status = match &t.status {
             ThirdPartyStatus::UpdateAvailable { version, repo, .. } => {
@@ -193,11 +199,12 @@ fn write_coverage(out: &mut String, report: &Report) {
     if c.uncovered_packages == 0 {
         return;
     }
+    let t = terms(report);
     let _ = writeln!(out, "## Coverage\n");
     let _ = writeln!(
         out,
-        "{} of {} packages come from outside the distro:\n",
-        c.uncovered_packages, c.installed_packages
+        "{} of {} {}s {}:\n",
+        c.uncovered_packages, c.installed_packages, t.item, t.coverage_intro
     );
     for (vendor, n) in &c.uncovered_vendors {
         let _ = writeln!(out, "- {}: {n}", esc(vendor));
@@ -239,18 +246,16 @@ fn write_finding(out: &mut String, report: &Report, f: &Finding) {
     }
     match &f.update {
         Some(u) => {
-            let place = if u.channel == "testing" {
-                "testing repository only"
-            } else {
-                "stable"
-            };
+            let place = update_place(&u.channel);
             let advisory = match (u.id.is_empty(), u.kind.as_str()) {
                 (true, _) => String::new(),
                 (false, "security") => format!(" ([{}]({}), security, {})", u.id, u.url, u.severity),
                 (false, kind) => format!(" ([{}]({}), marked {kind})", u.id, u.url),
             };
-            let _ = writeln!(out, "**Update:** `{}` in {place}{advisory}\n", u.build);
-            write_commands(out, std::slice::from_ref(&u.command));
+            let _ = writeln!(out, "**Update:** `{}` {place}{advisory}\n", u.build);
+            if !u.command.is_empty() {
+                write_commands(out, std::slice::from_ref(&u.command));
+            }
         }
         None => {
             let _ = writeln!(out, "**Update:** none available yet\n");

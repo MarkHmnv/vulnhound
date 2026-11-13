@@ -37,6 +37,19 @@ impl fmt::Display for Severity {
     }
 }
 
+/// Stored by name, e.g. in caches.
+impl serde::Serialize for Severity {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Severity {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(Self::parse(&String::deserialize(d)?))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
     Affected,
@@ -159,6 +172,8 @@ pub struct Report {
     pub upstream: Vec<UpstreamRelease>,
     /// Non-fatal problems, e.g. an unreachable data source.
     pub warnings: Vec<String>,
+    /// Good news worth a summary line, e.g. that the OS has every security update.
+    pub notes: Vec<String>,
 }
 
 #[cfg(test)]

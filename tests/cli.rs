@@ -2,7 +2,7 @@ use std::process::Command;
 
 /// Scans this machine: `cargo test -- --ignored live_scan`.
 #[test]
-#[ignore = "needs Fedora, rpm, dnf and network access"]
+#[ignore = "scans this machine: needs Fedora (rpm, dnf) or Windows, and network access"]
 fn live_scan_prints_summary_and_writes_report() {
     let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("live-report.md");
     let _ = std::fs::remove_file(&path);

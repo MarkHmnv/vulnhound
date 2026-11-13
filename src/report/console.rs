@@ -1,6 +1,8 @@
 //! Terminal summary; details go to the Markdown report.
 
-use super::{fix_commands, plural, severity_counts, split_findings, third_party_commands, upstream_without_findings};
+use super::{
+    fix_commands, plural, severity_counts, split_findings, terms, third_party_commands, upstream_without_findings,
+};
 use crate::model::{Finding, Report, Severity, ThirdPartyStatus};
 use anstyle::{AnsiColor, Style};
 use std::fmt::Write;
@@ -73,12 +75,13 @@ pub fn summary(report: &Report, report_path: Option<&str>, p: Palette) -> String
         env!("CARGO_PKG_VERSION"),
         report.distro
     );
+    let t = terms(report);
     let mut checked = format!(
-        "{} of {} packages checked against {} vulnerability data",
-        c.covered_packages, c.installed_packages, report.backend
+        "{} of {} {}s checked against {}",
+        c.covered_packages, c.installed_packages, t.item, t.data
     );
     if c.uncovered_packages > 0 {
-        let _ = write!(checked, ", {} third-party", c.uncovered_packages);
+        let _ = write!(checked, ", {} {}", c.uncovered_packages, t.uncovered);
     }
     let _ = writeln!(out, "{}", p.dim(&checked));
     for w in &report.warnings {
@@ -86,8 +89,15 @@ pub fn summary(report: &Report, report_path: Option<&str>, p: Palette) -> String
     }
     out.push('\n');
 
+    for n in &report.notes {
+        let _ = writeln!(out, "{}", p.good(n));
+    }
     if affected.is_empty() {
-        let _ = writeln!(out, "{}", p.good("No known vulnerabilities in the checked packages."));
+        let _ = writeln!(
+            out,
+            "{}",
+            p.good(&format!("No known vulnerabilities in the checked {}s.", t.item))
+        );
     } else {
         let counts: Vec<String> = severity_counts(&affected)
             .into_iter()
@@ -96,7 +106,7 @@ pub fn summary(report: &Report, report_path: Option<&str>, p: Palette) -> String
         let _ = writeln!(
             out,
             "{}: {}",
-            p.bold(&format!("{} vulnerable", plural(affected.len(), "package"))),
+            p.bold(&format!("{} vulnerable", plural(affected.len(), t.item))),
             counts.join(" · ")
         );
         write_top(&mut out, &affected, p);
@@ -118,11 +128,14 @@ pub fn summary(report: &Report, report_path: Option<&str>, p: Palette) -> String
 
     let fixes = fix_commands(&affected);
     if !fixes.is_empty() {
-        let n = affected.iter().filter(|f| f.update.is_some()).count();
+        let n = affected
+            .iter()
+            .filter(|f| f.update.as_ref().is_some_and(|u| !u.command.is_empty()))
+            .count();
         let _ = writeln!(
             out,
             "\n{}",
-            p.bold(&format!("Fixes available now for {}:", plural(n, "package")))
+            p.bold(&format!("Fixes available now for {}:", plural(n, t.item)))
         );
         for cmd in fixes {
             let _ = writeln!(out, "  {}", p.command(&cmd));
@@ -151,12 +164,12 @@ pub fn summary(report: &Report, report_path: Option<&str>, p: Palette) -> String
         let orphaned = report.third_party.len() - outdated;
         let mut parts = Vec::new();
         if outdated > 0 {
-            parts.push(format!("{} outdated", plural(outdated, "package")));
+            parts.push(format!("{} outdated", plural(outdated, t.item)));
         }
         if orphaned > 0 {
             parts.push(format!("{orphaned} in no repository"));
         }
-        let _ = writeln!(out, "\n{} {}", p.bold("Third-party:"), parts.join(", "));
+        let _ = writeln!(out, "\n{} {}", p.bold(t.updates_label), parts.join(", "));
         for cmd in third_party_commands(report) {
             let _ = writeln!(out, "  {}", p.command(&cmd));
         }
