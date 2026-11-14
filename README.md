@@ -4,12 +4,15 @@ Vulnerability scanner for Linux and Windows workstations and servers. Besides th
 distribution has already published, it shows:
 
 - known CVEs that are not fixed in stable yet, and fixes waiting in the testing repository;
+- on Ubuntu, fixes that only Ubuntu Pro subscribers get;
 - kernel CVEs from the kernel's own CVE authority;
 - upstream releases the distribution has not packaged yet;
 - third-party packages that are outdated or no longer come from any repository.
 
-Supported: **Fedora** and **Windows** 10, 11 and Server (see [Windows](#windows)). On other
-distributions vulnhound exits with an error rather than report a system it cannot check as clean.
+Supported: **Fedora**, **Debian**, **Ubuntu** (see [Debian and Ubuntu](#debian-and-ubuntu)) and
+**Windows** 10, 11 and Server (see [Windows](#windows)). On other distributions, derivatives
+like Linux Mint included, vulnhound exits with an error rather than report a system it cannot check
+as clean.
 
 ## Install
 
@@ -20,7 +23,17 @@ sudo dnf copr enable markhmnv/vulnhound
 sudo dnf install vulnhound
 ```
 
-Updates then come with `dnf upgrade`. Or build from source with a recent stable Rust toolchain:
+Updates then come with `dnf upgrade`.
+
+On Debian 12+ and Ubuntu 20.04+ (amd64), download `vulnhound_<version>-1_amd64.deb` from
+[Releases](https://github.com/MarkHmnv/vulnhound/releases) and install it; for a newer version,
+install the newer package the same way:
+
+```sh
+sudo apt install ./vulnhound_0.2.0-1_amd64.deb
+```
+
+Or build from source with a recent stable Rust toolchain:
 
 ```sh
 cargo install --path .
@@ -33,8 +46,8 @@ Scanning needs no root, only network access.
 ```sh
 vulnhound                     # scan, print a summary, write vulnhound-report.md
 vulnhound -o ~/scan.md        # write the report elsewhere
-vulnhound --no-upstream       # skip the upstream release check (faster)
-vulnhound --no-kernel-cves    # skip the kernel CVE check (no daily 60 MB download)
+vulnhound --no-upstream       # skip the upstream release check (faster; Fedora only)
+vulnhound --no-kernel-cves    # skip the kernel CVE check (no daily 60 MB download; Fedora only)
 ```
 
 While scanning, each step is shown with its progress. Afterwards you get:
@@ -49,7 +62,8 @@ Color and progress are only used on a terminal; `NO_COLOR` is respected.
 Exit status: `0` nothing found, `1` vulnerable packages found, `2` error. Upstream releases and
 third-party packages do not change it.
 
-A scan takes about 40 seconds, most of it querying Bugzilla.
+A scan takes about 40 seconds on Fedora, most of it querying Bugzilla, and a few seconds on Debian
+and Ubuntu.
 
 ## How it works on Fedora
 
@@ -109,6 +123,82 @@ and whether any enabled repository provides them at all.
 - Upstream versions are compared with rpm's algorithm; projects with unusual version schemes can
   give false hints.
 - Only the newest installed version of a package is checked (old kernels kept for fallback are not).
+
+## Debian and Ubuntu
+
+Tested on Debian 12 and 13 and Ubuntu 20.04, 22.04 and 24.04. Debian testing works too (unstable
+calls itself testing in os-release and is checked as such), as do Ubuntu releases that Canonical
+publishes OVAL data for.
+
+### Data sources
+
+| Source | Used for |
+|---|---|
+| `dpkg-query` | installed packages and their source packages |
+| `apt-cache policy` | which repository each package comes from, versions apt can install |
+| [Debian security tracker](https://security-tracker.debian.org/tracker/) | Debian: every CVE of every source package, per release: fixed version or why it is open |
+| [Ubuntu OVAL data](https://security-metadata.canonical.com/oval/) | Ubuntu: every CVE per release, its priority, the fixed version and the pocket it is published in |
+| `pro security-status` | Ubuntu: whether Ubuntu Pro is attached and which services are enabled |
+
+The security data of the release is downloaded once a day (Debian 15 MB, Ubuntu about 12 MB) and
+kept as an index in `~/.cache/vulnhound`.
+
+### Deciding what is vulnerable
+
+Debian and Ubuntu backport fixes into the version a release shipped, so upstream versions say
+nothing. A CVE applies when the installed source package is older than the version the distribution
+names as fixed in this release, or when it has no fix in this release. Open CVEs say why, as the
+distribution does: no fix yet, fix postponed, "will not fix" (Debian's minor issues), fix waiting for
+the next Debian point release, or not triaged yet. CVEs that Debian rates *unimportant* and Ubuntu
+*negligible* are left out: both consider them without real security impact.
+
+For each vulnerable package the update is the newest fixed version, shown with the suite apt would
+install it from (e.g. `bookworm-security`). If apt's package lists do not have it yet, the report
+says so; `sudo apt update` fetches them.
+
+Debian rarely rates CVEs, so most have no severity. Ubuntu's priority is used as is.
+
+### Ubuntu Pro
+
+Canonical publishes some fixes to Ubuntu Pro subscribers only:
+
+- **esm-apps**: fixes for packages in `universe` (ImageMagick, FFmpeg, Node.js, ...), for the whole
+  life of an LTS release. Without Pro these packages get only the fixes the community uploads.
+- **esm-infra**: once an LTS release leaves its five years of standard support (20.04 did in
+  2025), fixes for `main` too.
+
+Fixes in `main` during standard support are free and come out at the same time for everyone.
+
+vulnhound reads in which pocket each fix is published. A fix in esm-apps or esm-infra that this
+machine does not get is shown as "fix in Ubuntu Pro", with the commands to attach (`sudo pro
+attach`) or enable the service, and a warning counts them. Pro is free for personal use on up to
+5 machines. A release past standard support without esm-infra gets a warning of its own.
+
+### Kernel
+
+The kernel is matched like any other package, as its source package (`linux`, `linux-hwe-6.8`,
+`linux-aws`, ...), for the newest installed kernel image. A new kernel version is a new package, so
+the fix command is `apt full-upgrade`, which installs it through the kernel metapackage, followed by
+a reboot. Packages that are not the kernel itself, like `linux-libc-dev` that comes with any
+compiler, are not matched against kernel CVEs. Kernel CNA data is not used: Debian and Ubuntu
+backport kernel fixes.
+
+### Third-party packages
+
+A package counts as the distribution's when apt has its installed version (or, after Debian
+dropped a superseded version, its newest version) from a Debian or Ubuntu repository, Ubuntu Pro's
+included. Packages from other repositories (Docker, PPAs, vendors) and local installs are reported
+like on Fedora: whether their repository offers a newer version and whether any repository has them
+at all. Without apt's package lists (e.g. a container before `apt update`) every package counts as
+the distribution's, with a warning.
+
+### Limits
+
+- apt's view is only as recent as its package lists; vulnhound cannot refresh them without root.
+- Debian and Ubuntu publish no machine-readable link from a CVE to its DSA, DLA or USN, so updates
+  are shown without an advisory id.
+- The upstream release check is not done: stable releases do not follow upstream versions.
+- Livepatch is not taken into account; the installed kernel package counts.
 
 ## Windows
 
@@ -184,8 +274,9 @@ cargo test -- --ignored live_scan    # full scan of this machine
 cargo clippy --all-targets
 ```
 
-CI runs the tests on Linux and Windows and scans the Windows runner; the report is attached to
-each run.
+CI runs the tests on Linux and Windows and scans Fedora (in a container), the Windows runner, and
+Debian 12 and 13 and Ubuntu 20.04, 22.04 and 24.04 (in containers, with the .deb installed); the
+reports are attached to each run.
 
 Each platform's binary contains only its own backend (`#[cfg]` in `src/lib.rs` and
 `src/distro/mod.rs`); tests build both, so either backend is tested on any host.
@@ -198,6 +289,7 @@ src/
   main.rs            CLI
   distro/mod.rs      Backend trait, distribution detection
   distro/fedora/     Fedora backend: rpmdb, changelog, bodhi, bugzilla
+  distro/debian/     Debian and Ubuntu backend: apt, Debian tracker, Ubuntu OVAL, Ubuntu Pro
   distro/windows/    Windows backend: registry inventory, msrc, nvd, program catalog, winget
   kernel.rs          kernel CNA data (OSV), shared by backends
   upstream.rs        release-monitoring.org client, shared by backends
@@ -205,8 +297,10 @@ src/
   progress.rs        progress events
   report/            terminal summary, Markdown report, progress display
   rpmver.rs          rpm version comparison
+  debver.rs          dpkg version comparison
   system.rs          commands, files, HTTP, cache
 vulnhound.spec       RPM spec
+.github/build-deb.sh builds the .deb from a release binary
 .copr/Makefile       builds the SRPM for COPR, with vendored crates
 ```
 

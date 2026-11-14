@@ -1,6 +1,6 @@
 [package]
 name = "vulnhound"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "Vulnerability scanner for Linux and Windows hosts"
@@ -20,11 +20,13 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 ureq = "3.5.1"
 
-# Kernel CVE data (OSV export) is Linux-only.
+# Kernel CVE data (OSV export, zip) and Ubuntu's OVAL data (bzip2) are Linux-only.
 [target.'cfg(not(windows))'.dependencies]
+bzip2 = "0.6.1"
 zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+bzip2 = "0.6.1"
 zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
 
 [profile.release]

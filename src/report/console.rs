@@ -206,6 +206,7 @@ fn write_top(out: &mut String, affected: &[&Finding], p: Palette) {
         );
         let fix = match &f.update {
             Some(u) if u.channel == "testing" => p.warn("fix in testing"),
+            Some(u) if u.channel.starts_with(super::PRO_CHANNEL_PREFIX) => p.warn("fix in Ubuntu Pro"),
             Some(_) => p.good("fix available"),
             None => p.dim("no fix yet"),
         };

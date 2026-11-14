@@ -6,6 +6,8 @@ use std::collections::HashMap;
 pub struct OsRelease {
     pub id: String,
     pub version_id: String,
+    /// `VERSION_CODENAME`, e.g. "noble"; Ubuntu derivatives also set `UBUNTU_CODENAME`.
+    pub codename: String,
     pub pretty_name: String,
 }
 
@@ -25,6 +27,7 @@ impl OsRelease {
         Self {
             id: get("ID").to_ascii_lowercase(),
             version_id: get("VERSION_ID"),
+            codename: get("VERSION_CODENAME").to_ascii_lowercase(),
             pretty_name: map
                 .get("PRETTY_NAME")
                 .cloned()
@@ -62,5 +65,12 @@ mod tests {
         assert_eq!(os.id, "fedora");
         assert_eq!(os.version_id, "45");
         assert_eq!(os.pretty_name, "Rocky \"Linux\" 45", "falls back to NAME VERSION_ID");
+        assert_eq!(os.codename, "");
+    }
+
+    #[test]
+    fn reads_the_codename() {
+        let os = OsRelease::parse("ID=ubuntu\nVERSION_ID=\"24.04\"\nVERSION_CODENAME=noble\nUBUNTU_CODENAME=noble");
+        assert_eq!(os.codename, "noble");
     }
 }

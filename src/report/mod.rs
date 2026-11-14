@@ -75,9 +75,14 @@ pub(crate) fn terms(report: &Report) -> Terms {
             updates_summary: ("program update", "available in winget"),
         }
     } else {
+        let data = match report.backend.as_str() {
+            "debian" => "Debian's security tracker".to_string(),
+            "ubuntu" => "Ubuntu's OVAL data".to_string(),
+            other => format!("{other} vulnerability data"),
+        };
         Terms {
             item: "package",
-            data: format!("{} vulnerability data", report.backend),
+            data,
             uncovered: "third-party",
             coverage_intro: "come from outside the distro",
             updates_heading: "Third-party packages",
@@ -89,8 +94,14 @@ pub(crate) fn terms(report: &Report) -> Terms {
     }
 }
 
+/// Channel of a fix that only a not yet enabled Ubuntu Pro service delivers: `pro:esm-apps`.
+pub const PRO_CHANNEL_PREFIX: &str = "pro:";
+
 /// Where an update comes from, after "**Update:** `<build>`".
 pub(crate) fn update_place(channel: &str) -> String {
+    if let Some(service) = channel.strip_prefix(PRO_CHANNEL_PREFIX) {
+        return format!("only from Ubuntu Pro ({service}), which this machine does not get");
+    }
     match channel {
         "testing" => "in testing repository only".into(),
         "stable" => "in stable".into(),

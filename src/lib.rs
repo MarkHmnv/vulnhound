@@ -5,6 +5,8 @@
 // build both, so either backend is tested on any host.
 #[cfg(any(not(windows), test))]
 pub mod cve;
+#[cfg(any(not(windows), test))]
+pub mod debver;
 pub mod distro;
 #[cfg(any(not(windows), test))]
 pub mod kernel;

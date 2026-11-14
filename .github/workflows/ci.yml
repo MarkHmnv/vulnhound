@@ -44,6 +44,58 @@ jobs:
           name: fedora-report
           path: target/tmp/live-report.md
 
+  # Built on Debian 11 (glibc 2.31), so the package installs on Debian 11+ and Ubuntu 20.04+.
+  deb:
+    runs-on: ubuntu-latest
+    container: rust:1-bullseye
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release --locked
+      - run: .github/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: target/debian/*.deb
+
+  # The package installed and run as a user. Ubuntu 20.04 is past standard support: its fixes
+  # come from Ubuntu Pro (esm-infra) only.
+  debian-scan:
+    needs: deb
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12", "debian:13", "ubuntu:20.04", "ubuntu:22.04", "ubuntu:24.04"]
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: deb
+      # Images come without package lists; a real system has them.
+      - run: apt-get update && apt-get install -y ./deb/*.deb
+        env:
+          DEBIAN_FRONTEND: noninteractive
+      - run: |
+          useradd -m scanner
+          set +e
+          su scanner -c 'cd ~ && vulnhound -o report.md'
+          code=$?
+          set -e
+          cp /home/scanner/report.md live-report.md
+          test "$code" -le 1
+          head -n1 live-report.md | grep -qx '# vulnhound report'
+      - id: name
+        run: echo "name=$(echo '${{ matrix.image }}' | tr ':.' '--')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ steps.name.outputs.name }}-report
+          path: live-report.md
+
   # Windows Server with Chrome, Firefox, 7-Zip, Git, Python, Node, ...
   windows-scan:
     runs-on: windows-latest
@@ -62,10 +114,10 @@ jobs:
             target/tmp/live-report.md
             target/release/vulnhound.exe
 
-  # New version in Cargo.toml -> tag, release with the exe, COPR build.
+  # New version in Cargo.toml -> tag, release with the exe and the .deb, COPR build.
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, fedora-scan, windows-scan]
+    needs: [test, fedora-scan, deb, debian-scan, windows-scan]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -98,15 +150,22 @@ jobs:
       - if: steps.version.outputs.release == 'true'
         run: cargo build --release --locked
       - if: steps.version.outputs.release == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: deb
+      - if: steps.version.outputs.release == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           exe="vulnhound-$VERSION-windows-x86_64.exe"
           cp target/release/vulnhound.exe "$exe"
           sha256sum "$exe" > "$exe.sha256"
+          deb=$(ls deb/*.deb)
+          (cd deb && sha256sum "$(basename "$deb")") > "$deb.sha256"
           sed "s/{{VERSION}}/$VERSION/g" .github/release-notes.md > "$RUNNER_TEMP/notes.md"
           gh release create "v$VERSION" --target "$GITHUB_SHA" --title "vulnhound $VERSION" \
-            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes "$exe" "$exe.sha256"
+            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes "$exe" "$exe.sha256" "$deb" "$deb.sha256"
 
   # COPR_CONFIG: ~/.config/copr from https://copr.fedorainfracloud.org/api/
   copr:

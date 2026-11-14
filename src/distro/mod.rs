@@ -1,6 +1,8 @@
 //! One backend per distribution family.
 
 #[cfg(any(not(windows), test))]
+pub mod debian;
+#[cfg(any(not(windows), test))]
 pub mod fedora;
 #[cfg(any(windows, test))]
 pub mod windows;
@@ -84,8 +86,27 @@ pub fn detect(os: &OsRelease) -> Result<Box<dyn Backend>> {
                 pretty_name: os.pretty_name.clone(),
             }))
         }
+        "debian" | "ubuntu" => {
+            let flavor = if os.id == "debian" {
+                debian::Flavor::Debian
+            } else {
+                debian::Flavor::Ubuntu
+            };
+            // Debian testing and unstable have a codename but no VERSION_ID.
+            if os.codename.is_empty() {
+                anyhow::bail!(
+                    "cannot tell the {} release: VERSION_CODENAME is missing from os-release",
+                    os.id
+                );
+            }
+            Ok(Box::new(debian::Debian {
+                flavor,
+                codename: os.codename.clone(),
+                pretty_name: os.pretty_name.clone(),
+            }))
+        }
         other => anyhow::bail!(
-            "unsupported distribution '{}' ({}). vulnhound supports: fedora, windows. \
+            "unsupported distribution '{}' ({}). vulnhound supports: fedora, debian, ubuntu, windows. \
              It refuses to scan rather than report a system it cannot check as clean.",
             if other.is_empty() { "unknown" } else { other },
             os.pretty_name
@@ -99,9 +120,23 @@ mod tests {
 
     #[test]
     fn refuses_unsupported_distros_instead_of_reporting_clean() {
-        let os = OsRelease::parse("ID=debian\nVERSION_ID=13\nPRETTY_NAME=\"Debian GNU/Linux 13\"");
+        let os = OsRelease::parse("ID=linuxmint\nVERSION_ID=22\nVERSION_CODENAME=wilma\nID_LIKE=\"ubuntu debian\"");
         let err = detect(&os).err().unwrap().to_string();
-        assert!(err.contains("unsupported distribution 'debian'"));
+        assert!(err.contains("unsupported distribution 'linuxmint'"), "{err}");
+    }
+
+    #[test]
+    fn detects_debian_and_ubuntu_by_codename() {
+        let os = OsRelease::parse(
+            "ID=debian\nVERSION_ID=\"13\"\nVERSION_CODENAME=trixie\nPRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"",
+        );
+        assert_eq!(detect(&os).unwrap().name(), "debian");
+        let os = OsRelease::parse("ID=ubuntu\nVERSION_ID=\"24.04\"\nVERSION_CODENAME=noble");
+        assert_eq!(detect(&os).unwrap().name(), "ubuntu");
+        assert!(
+            detect(&OsRelease::parse("ID=debian\nVERSION_ID=13")).is_err(),
+            "no codename"
+        );
     }
 
     #[test]
