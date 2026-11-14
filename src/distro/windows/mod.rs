@@ -16,7 +16,7 @@ use crate::distro::{Backend, ScanOptions, Steps, or_warn};
 use crate::model::{
     Confidence, Coverage, Finding, Report, Severity, ThirdPartyPackage, ThirdPartyStatus, Update, Vulnerability,
 };
-use crate::progress::Progress;
+use crate::progress::{Deferred, Progress};
 use crate::report::plural;
 use crate::system::System;
 use anyhow::Result;
@@ -59,50 +59,67 @@ impl Backend for Windows {
         let programs = inv.programs();
         progress.finish(&plural(programs.len(), "program"));
 
-        let mut steps = Steps::new(progress, &mut warnings);
         let installed_build = format!("10.0.{}.{}", inv.build.trim(), inv.ubr.trim());
-        let os = steps.run(
-            "Checking Windows against Microsoft security updates",
-            |w| check_windows(sys, &inv, &installed_build, progress, w),
-            |f| match f {
-                Some(f) if !f.vulnerabilities.is_empty() => {
-                    format!(
-                        "{} not fixed in build {}",
-                        plural(f.vulnerabilities.len(), "CVE"),
-                        f.installed
-                    )
-                }
-                Some(f) => format!("build {} is up to date", f.installed),
-                None => String::new(),
-            },
-        );
-
         let api_key = opts.nvd_api_key.as_deref().filter(|k| !k.trim().is_empty());
         let matched = match_programs(&programs, api_key.is_some());
         let client = nvd::Client::new(sys, api_key);
-        let checked = steps.run(
-            "Checking programs against NVD",
-            |w| check_programs(&client, &matched, progress, w),
-            |c| {
-                let vulnerable = c.findings.len();
-                format!(
-                    "{} checked, {vulnerable} vulnerable",
-                    plural(c.covered.len(), "program")
-                )
-            },
-        );
 
-        let upgrades = steps.run(
-            "Listing winget updates",
-            |w| {
-                or_warn(
-                    winget::query(sys),
-                    w,
-                    "cannot list winget updates, program updates are not shown",
-                )
-            },
-            |u| plural(u.len(), "update"),
-        );
+        // MSRC and winget run while NVD waits on its rate limit.
+        let msrc_progress = Deferred::new(progress);
+        let (checked, os, upgrades) = std::thread::scope(|s| {
+            let msrc = s.spawn(|| {
+                let mut w = Vec::new();
+                let f = check_windows(sys, &inv, &installed_build, &msrc_progress, &mut w);
+                msrc_progress.done();
+                (f, w)
+            });
+            let winget = s.spawn(|| winget::query(sys));
+
+            let mut steps = Steps::new(progress, &mut warnings);
+            let checked = steps.run(
+                "Checking programs against NVD",
+                |w| check_programs(&client, &matched, progress, w),
+                |c| {
+                    let vulnerable = c.findings.len();
+                    format!(
+                        "{} checked, {vulnerable} vulnerable",
+                        plural(c.covered.len(), "program")
+                    )
+                },
+            );
+            let os = steps.run(
+                "Checking Windows against Microsoft security updates",
+                |w| {
+                    msrc_progress.attach();
+                    let (f, msrc_warnings) = msrc.join().expect("the MSRC check does not panic");
+                    w.extend(msrc_warnings);
+                    f
+                },
+                |f| match f {
+                    Some(f) if !f.vulnerabilities.is_empty() => {
+                        format!(
+                            "{} not fixed in build {}",
+                            plural(f.vulnerabilities.len(), "CVE"),
+                            f.installed
+                        )
+                    }
+                    Some(f) => format!("build {} is up to date", f.installed),
+                    None => String::new(),
+                },
+            );
+            let upgrades = steps.run(
+                "Listing winget updates",
+                |w| {
+                    or_warn(
+                        winget.join().expect("the winget query does not panic"),
+                        w,
+                        "cannot list winget updates, program updates are not shown",
+                    )
+                },
+                |u| plural(u.len(), "update"),
+            );
+            (checked, os, upgrades)
+        });
 
         let mut findings = checked.findings;
         attach_upgrades(&mut findings, &checked.cves, &upgrades);

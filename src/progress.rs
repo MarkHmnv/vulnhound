@@ -23,6 +23,52 @@ impl Progress for Silent {
     fn warn(&self, _: &str) {}
 }
 
+/// Background work's `detail`, held until its step [`Deferred::attach`]es.
+pub struct Deferred<'a> {
+    target: &'a dyn Progress,
+    /// (attached, pending detail)
+    state: std::sync::Mutex<(bool, Option<String>)>,
+}
+
+impl<'a> Deferred<'a> {
+    pub fn new(target: &'a dyn Progress) -> Self {
+        Self {
+            target,
+            state: std::sync::Mutex::new((false, None)),
+        }
+    }
+
+    pub fn attach(&self) {
+        let mut state = self.state.lock().expect("no panics while holding the lock");
+        state.0 = true;
+        if let Some(text) = state.1.take() {
+            self.target.detail(&text);
+        }
+    }
+
+    pub fn done(&self) {
+        let mut state = self.state.lock().expect("no panics while holding the lock");
+        state.0 = false;
+        state.1 = None;
+    }
+}
+
+impl Progress for Deferred<'_> {
+    fn start(&self, _: &str, _: Option<u64>) {}
+    fn add_total(&self, _: u64) {}
+    fn advance(&self, _: u64) {}
+    fn detail(&self, text: &str) {
+        let mut state = self.state.lock().expect("no panics while holding the lock");
+        if state.0 {
+            self.target.detail(text);
+        } else {
+            state.1 = Some(text.into());
+        }
+    }
+    fn finish(&self, _: &str) {}
+    fn warn(&self, _: &str) {}
+}
+
 #[cfg(test)]
 pub mod recording {
 
@@ -86,5 +132,50 @@ pub mod recording {
         fn warn(&self, reason: &str) {
             self.end(Err(reason.into()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Details(Mutex<Vec<String>>);
+
+    impl Progress for Details {
+        fn start(&self, _: &str, _: Option<u64>) {}
+        fn add_total(&self, _: u64) {}
+        fn advance(&self, _: u64) {}
+        fn detail(&self, text: &str) {
+            self.0.lock().unwrap().push(text.into());
+        }
+        fn finish(&self, _: &str) {}
+        fn warn(&self, _: &str) {}
+    }
+
+    #[test]
+    fn deferred_shows_the_latest_detail_once_attached() {
+        let target = Details::default();
+        let d = Deferred::new(&target);
+        d.detail("downloading 2026-Nov");
+        d.detail("downloading 2026-Oct");
+        assert!(target.0.lock().unwrap().is_empty());
+        d.attach();
+        d.detail("downloading 2026-Sep");
+        assert_eq!(
+            *target.0.lock().unwrap(),
+            ["downloading 2026-Oct", "downloading 2026-Sep"]
+        );
+    }
+
+    #[test]
+    fn deferred_drops_details_of_finished_work() {
+        let target = Details::default();
+        let d = Deferred::new(&target);
+        d.detail("downloading 2026-Nov");
+        d.done();
+        d.attach();
+        assert!(target.0.lock().unwrap().is_empty());
     }
 }
