@@ -9,14 +9,19 @@ top=$(cd "$(dirname "$0")/.." && pwd)
 bin=${1:-$top/target/release/vulnhound}
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$top/Cargo.toml" | head -n1)
 arch=$(dpkg --print-architecture)
+# CI checks out as another user than the container's root, and git refuses such repositories.
+# A private HOME marks this one as safe; git before 2.39 ignores `-c safe.directory`.
+githome=$(mktemp -d)
+root=$(mktemp -d)
+trap 'rm -rf "$githome" "$root"' EXIT
+printf '[safe]\n\tdirectory = %s\n' "$top" > "$githome/.gitconfig"
+git() { HOME=$githome command git -C "$top" "$@"; }
 # As in the RPM changelog: whoever made the commit that is packaged.
-maintainer=$(git -C "$top" log -1 --format='%an <%ae>')
+maintainer=$(git log -1 --format='%an <%ae>')
 # The newest glibc symbol version the binary uses.
 glibc=$(objdump -T "$bin" | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -V | tail -n1)
 test -n "$version" && test -n "$glibc"
 
-root=$(mktemp -d)
-trap 'rm -rf "$root"' EXIT
 chmod 0755 "$root"
 doc=$root/usr/share/doc/vulnhound
 install -Dm0755 "$bin" "$root/usr/bin/vulnhound"
@@ -35,7 +40,7 @@ install -Dm0644 "$top/README.md" "$doc/README.md"
     sed 's/^$/./; s/^/ /' "$top/LICENSE"
 } > "$doc/copyright"
 printf 'vulnhound (%s-1) stable; urgency=medium\n\n  * Release %s\n\n -- %s  %s\n' \
-    "$version" "$version" "$maintainer" "$(git -C "$top" log -1 --format=%cD)" |
+    "$version" "$version" "$maintainer" "$(git log -1 --format=%cD)" |
     gzip -9n > "$doc/changelog.Debian.gz"
 
 mkdir -p "$root/DEBIAN"
