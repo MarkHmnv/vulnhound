@@ -112,6 +112,9 @@ and whether any enabled repository provides them at all.
 
 ## Windows
 
+Download `vulnhound-<version>-windows-x86_64.exe` from
+[Releases](https://github.com/MarkHmnv/vulnhound/releases) and run it, or build it:
+
 ```powershell
 cargo build --release
 .\target\release\vulnhound.exe

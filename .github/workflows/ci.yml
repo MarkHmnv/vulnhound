@@ -5,8 +5,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
+  COPR_PROJECT: markhmnv/vulnhound
 
 jobs:
   test:
@@ -20,6 +24,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
 
@@ -45,6 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --release -- --ignored live_scan --nocapture
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
@@ -55,3 +61,68 @@ jobs:
           path: |
             target/tmp/live-report.md
             target/release/vulnhound.exe
+
+  # New version in Cargo.toml -> tag, release with the exe, COPR build.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, fedora-scan, windows-scan]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+    env:
+      # No Visual C++ Redistributable needed.
+      RUSTFLAGS: -C target-feature=+crt-static
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "v$version is already released"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "releasing v$version"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.release == 'true'
+        uses: dtolnay/rust-toolchain@stable
+      - if: steps.version.outputs.release == 'true'
+        run: cargo build --release --locked
+      - if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          exe="vulnhound-$VERSION-windows-x86_64.exe"
+          cp target/release/vulnhound.exe "$exe"
+          sha256sum "$exe" > "$exe.sha256"
+          sed "s/{{VERSION}}/$VERSION/g" .github/release-notes.md > "$RUNNER_TEMP/notes.md"
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "vulnhound $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes "$exe" "$exe.sha256"
+
+  # COPR_CONFIG: ~/.config/copr from https://copr.fedorainfracloud.org/api/
+  copr:
+    needs: release
+    if: needs.release.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+    steps:
+      - run: dnf -y install copr-cli
+      - run: |
+          test -n "$COPR_CONFIG" || { echo "the COPR_CONFIG secret is not set"; exit 1; }
+          printf '%s\n' "$COPR_CONFIG" > "$RUNNER_TEMP/copr.conf"
+          copr-cli --config "$RUNNER_TEMP/copr.conf" buildscm "$COPR_PROJECT" \
+            --clone-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" --commit "v$VERSION" \
+            --method make_srpm
